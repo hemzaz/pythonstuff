@@ -41,7 +41,9 @@ class TerraformBackendCreator:
         try:
             self.dynamodb_client.create_table(
                 TableName=self.dynamodb_table_name,
-                AttributeDefinitions=[{"AttributeName": "LockID", "AttributeType": "S"}],
+                AttributeDefinitions=[
+                    {"AttributeName": "LockID", "AttributeType": "S"}
+                ],
                 KeySchema=[{"AttributeName": "LockID", "KeyType": "HASH"}],
                 BillingMode="PAY_PER_REQUEST",
             )
@@ -72,9 +74,15 @@ terraform {{
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Create resources for Terraform backend.')
-    parser.add_argument('-e', '--envname', type=str, help='Environment name', default=Path.cwd().name)
-    parser.add_argument('-r', '--region', type=str, help='AWS Region', default='us-west-2')
+    parser = argparse.ArgumentParser(
+        description="Create resources for Terraform backend."
+    )
+    parser.add_argument(
+        "-e", "--envname", type=str, help="Environment name", default=Path.cwd().name
+    )
+    parser.add_argument(
+        "-r", "--region", type=str, help="AWS Region", default="us-west-2"
+    )
     return parser.parse_args()
 
 
