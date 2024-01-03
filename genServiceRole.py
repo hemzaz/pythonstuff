@@ -1,45 +1,22 @@
 #!/usr/bin/env python3
 import boto3
 import json
-import sys
+import argparse
 
-# Check if the correct number of arguments are provided
-if len(sys.argv) != 3:
-    print("Usage: python script.py <company> <env>")
-    sys.exit(1)
+def parse_args():
+    parser = argparse.ArgumentParser(description='AWS IAM setup script')
+    parser.add_argument('--company', default='default_company', help='Company name')
+    parser.add_argument('--env', default='default_env', help='Environment')
+    return parser.parse_args()
 
-# Assign arguments to variables
-company = sys.argv[1]
-env = sys.argv[2]
+def get_aws_account_id(sts_client):
+    return sts_client.get_caller_identity().get("Account")
 
-# Set up AWS clients
-iam_client = boto3.client("iam")
-sts_client = boto3.client("sts")
+def get_oidc_providers(iam_client):
+    return iam_client.list_open_id_connect_providers()
 
-# Get the AWS account ID
-account_id = sts_client.get_caller_identity().get("Account")
-
-# 1. Fetch the OpenID Connect providers for the account
-try:
-    oidc_providers = iam_client.list_open_id_connect_providers()
-    if not oidc_providers["OpenIDConnectProviderList"]:
-        print("No OIDC providers found.")
-        sys.exit(1)
-    print("OIDC Providers:", oidc_providers)
-except Exception as e:
-    print(f"Error fetching OIDC providers: {e}")
-    sys.exit(1)
-
-# Assuming there is at least one OIDC provider, get the ARN of the first one
-oidc_provider_arn = oidc_providers["OpenIDConnectProviderList"][0]["Arn"]
-
-# Extract the OIDC provider URL from the ARN
-oidc_provider_url = "/".join(oidc_provider_arn.split("/")[1:])
-
-# 2. Set up a role named "<company>-<env>-k8s-services-roles"
-role_name = f"{company}-{env}-k8s-services-roles"
-assume_role_policy = json.dumps(
-    {
+def create_or_update_role(iam_client, role_name, oidc_provider_arn, oidc_provider_url):
+    assume_role_policy = json.dumps({
         "Version": "2012-10-17",
         "Statement": [
             {
@@ -51,83 +28,85 @@ assume_role_policy = json.dumps(
                 },
             }
         ],
-    }
-)
-
-# Create or update the role with the trust relationship
-try:
-    role = iam_client.create_role(
-        RoleName=role_name, AssumeRolePolicyDocument=assume_role_policy
-    )
-    print("Role created:", role)
-except iam_client.exceptions.EntityAlreadyExistsException:
+    })
     try:
-        iam_client.update_assume_role_policy(
-            RoleName=role_name, PolicyDocument=assume_role_policy
-        )
+        role = iam_client.create_role(RoleName=role_name, AssumeRolePolicyDocument=assume_role_policy)
+        print("Role created:", role)
+    except iam_client.exceptions.EntityAlreadyExistsException:
+        iam_client.update_assume_role_policy(RoleName=role_name, PolicyDocument=assume_role_policy)
         print(f"Role {role_name} already exists. Trust policy updated.")
-    except Exception as e:
-        print(f"Error updating trust policy for role {role_name}: {e}")
 
-# 3. Set up a policy named "<company>-<env>-k8s-services-policy"
-policy_name = f"{company}-{env}-k8s-services-policy"
-policy_document = {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "SecretManager",
-            "Effect": "Allow",
-            "Action": [
-                "secretsmanager:GetResourcePolicy",
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-                "secretsmanager:ListSecretVersionIds",
-                "secretsmanager:GetRandomPassword",
-                "secretsmanager:ListSecrets",
-            ],
-            "Resource": f"arn:aws:secretsmanager:us-east-1:{account_id}:secret:*",
-        },
-        {
-            "Sid": "ListObjectsInBucket",
-            "Effect": "Allow",
-            "Action": "s3:ListBucket",
-            "Resource": "arn:aws:s3:::*",
-        },
-        {
-            "Sid": "AllObjectActions",
-            "Effect": "Allow",
-            "Action": "s3:*Object",
-            "Resource": "arn:aws:s3:::*/*",
-        },
-        {
-            "Sid": "AllowMSKAll",
-            "Effect": "Allow",
-            "Action": "kafka-cluster:*",
-            "Resource": "*",
-        },
-        {"Effect": "Allow", "Action": ["s3:*", "s3-object-lambda:*"], "Resource": "*"},
-    ],
-}
+def create_or_fetch_policy(iam_client, policy_name, policy_document_json, account_id):
+    try:
+        policy_response = iam_client.create_policy(PolicyName=policy_name, PolicyDocument=policy_document_json)
+        return policy_response["Policy"]["Arn"]
+    except iam_client.exceptions.EntityAlreadyExistsException:
+        return iam_client.get_policy(PolicyArn=f"arn:aws:iam::{account_id}:policy/{policy_name}")["Policy"]["Arn"]
 
-# Convert the policy document to JSON string format
-policy_document_json = json.dumps(policy_document)
-
-# Create the policy or fetch its ARN if it already exists
-try:
-    policy_response = iam_client.create_policy(
-        PolicyName=policy_name, PolicyDocument=policy_document_json
-    )
-    policy_arn = policy_response["Policy"]["Arn"]
-    print("Policy created:", policy_response)
-except iam_client.exceptions.EntityAlreadyExistsException:
-    policy_arn = iam_client.get_policy(
-        PolicyArn=f"arn:aws:iam::{account_id}:policy/{policy_name}"
-    )["Policy"]["Arn"]
-    print(f"Policy {policy_name} already exists.")
-
-# Attach the policy to the role
-try:
+def attach_policy_to_role(iam_client, role_name, policy_arn):
     iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
-    print(f"Policy {policy_name} attached to role {role_name}.")
-except Exception as e:
-    print(f"Error attaching policy: {e}")
+
+def main():
+    args = parse_args()
+    iam_client = boto3.client("iam")
+    sts_client = boto3.client("sts")
+    account_id = get_aws_account_id(sts_client)
+    oidc_providers = get_oidc_providers(iam_client)
+    
+    if not oidc_providers["OpenIDConnectProviderList"]:
+        print("No OIDC providers found.")
+        sys.exit(1)
+    
+    oidc_provider_arn = oidc_providers["OpenIDConnectProviderList"][0]["Arn"]
+    oidc_provider_url = "/".join(oidc_provider_arn.split("/")[1:])
+    role_name = f"{args.company}-{args.env}-k8s-services-roles"
+    policy_name = f"{args.company}-{args.env}-k8s-services-policy"
+    policy_document_json = json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "SecretManager",
+                "Effect": "Allow",
+                "Action": [
+                    "secretsmanager:GetResourcePolicy",
+                    "secretsmanager:GetSecretValue",
+                    "secretsmanager:DescribeSecret",
+                    "secretsmanager:ListSecretVersionIds",
+                    "secretsmanager:GetRandomPassword",
+                    "secretsmanager:ListSecrets",
+                ],
+                "Resource": f"arn:aws:secretsmanager:us-east-1:{account_id}:secret:*",
+            },
+            {
+                "Sid": "ListObjectsInBucket",
+                "Effect": "Allow",
+                "Action": "s3:ListBucket",
+                "Resource": "arn:aws:s3:::*",
+            },
+            {
+                "Sid": "AllObjectActions",
+                "Effect": "Allow",
+                "Action": "s3:*Object",
+                "Resource": "arn:aws:s3:::*/*",
+            },
+            {
+                "Sid": "AllowMSKAll",
+                "Effect": "Allow",
+                "Action": "kafka-cluster:*",
+                "Resource": "*",
+            },
+            {
+                "Effect": "Allow",
+                "Action": ["s3:*", "s3-object-lambda:*"],
+                "Resource": "*",
+            },
+        ],
+    })
+    
+    create_or_update_role(iam_client, role_name, oidc_provider_arn, oidc_provider_url)
+    policy_arn = create_or_fetch_policy(iam_client, policy_name, policy_document_json, account_id)
+    attach_policy_to_role(iam_client, role_name, policy_arn)
+    print(f"Setup completed for {args.company} in {args.env} environment.")
+
+if __name__ == '__main__':
+    main()
