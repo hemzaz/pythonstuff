@@ -1,0 +1,41 @@
+RegistrantContact:
+  FirstName: "company"
+  LastName: "company"
+  Email: "software.admin@company.com"
+  PhoneNumber: "+972.123456789"
+  AddressLine1: "tel aviv"
+  City: "tel aviv"
+  State: ""
+  CountryCode: "IL"
+  ZipCode: "1234567"
+  PrivacyProtectAdminContact: True
+  PrivacyProtectRegistrantContact: True
+  PrivacyProtectTechContact: True
+
+AdminContact:
+  FirstName: "company"
+  LastName: "company"
+  Email: "software.admin@company.com"
+  PhoneNumber: "+972.123456789"
+  AddressLine1: "tel aviv"
+  City: "tel aviv"
+  State: ""
+  CountryCode: "IL"
+  ZipCode: "1234567"
+  PrivacyProtectAdminContact: True
+  PrivacyProtectRegistrantContact: True
+  PrivacyProtectTechContact: True
+
+TechContact:
+  FirstName: "company"
+  LastName: "company"
+  Email: "software.admin@company.com"
+  PhoneNumber: "+972.123456789"
+  AddressLine1: "tel aviv"
+  City: "tel aviv"
+  State: ""
+  CountryCode: "IL"
+  ZipCode: "1234567"
+  PrivacyProtectAdminContact: True
+  PrivacyProtectRegistrantContact: True
+  PrivacyProtectTechContact: True
